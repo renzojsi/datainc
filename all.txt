@@ -1,0 +1,536 @@
+==> README.txt <==
+analyzecalls.php	- Downloads call info and generates answers
+datainc.sql		- MySQL script to generate database and tables
+getallsymbols.php	- Downloads all US stock symbols from Nasdaq and inserts into db, after minor cleansing.
+gethl.php		- Downloads all RSS headline news from Yahoo Finance and inserts into db, after minor cleansign.
+gettopsymbols.php	- Downloads symbols of most active stocks from Wall St. Journal and inserts into db, after minor cleansing.
+plot1.html
+plot1.pdf
+plot1.png
+plot2.html
+plot2.pdf
+plot2.png
+plot3.pdf
+plot3.png
+probabilities.csv	- Data from probabilties.php to generate Plot 1.
+probabilities.php	- Generates positive/negative news headline probabilities for all stocks.
+scores.csv		- Data from sentiment.php to generate Plot 2 and Plot 3.
+scores.xlsx		- Excel file that uses CSV files to generate plot1 and plot2 images.
+sentiment.php		- Generates positive/negative news headline and description sentiment scores for all stocks.
+
+==> datainc.sql <==
+-- MySQL dump 10.13  Distrib 5.6.14, for osx10.7 (x86_64)
+--
+-- Host: localhost    Database: datainc
+-- ------------------------------------------------------
+-- Server version	5.6.14
+
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!40101 SET NAMES utf8 */;
+/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
+/*!40103 SET TIME_ZONE='+00:00' */;
+/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
+/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
+/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+--
+-- Table structure for table `calls`
+--
+
+DROP TABLE IF EXISTS `calls`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `calls` (
+  `item` varchar(10) NOT NULL,
+  `type` varchar(10) DEFAULT NULL,
+  `typetext` varchar(128) DEFAULT NULL,
+  `priority` varchar(10) DEFAULT NULL,
+  `mapx` int(10) DEFAULT NULL,
+  `mapy` int(10) DEFAULT NULL,
+  `created` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  `dispatched` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  `arrived` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  `closed` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  `disposition` varchar(10) DEFAULT NULL,
+  `dispositiontext` varchar(128) DEFAULT NULL,
+  `address` varchar(64) DEFAULT NULL,
+  `zip` int(10) DEFAULT NULL,
+  `pdistrict` int(5) DEFAULT NULL,
+  `longitude` float DEFAULT '0',
+  `latitude` float DEFAULT '0',
+  PRIMARY KEY (`item`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `headlines`
+--
+
+DROP TABLE IF EXISTS `headlines`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `headlines` (
+  `hid` int(20) NOT NULL AUTO_INCREMENT,
+  `symbol` varchar(10) NOT NULL,
+  `title` varchar(256) DEFAULT NULL,
+  `description` varchar(512) DEFAULT NULL,
+  `link` varchar(256) DEFAULT NULL,
+  `guid` varchar(64) DEFAULT NULL,
+  `pubDate` varchar(128) DEFAULT NULL,
+  `time` timestamp NULL DEFAULT NULL,
+  `created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`hid`),
+  UNIQUE KEY `guid` (`guid`)
+) ENGINE=InnoDB AUTO_INCREMENT=179375974 DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `symbols`
+--
+
+DROP TABLE IF EXISTS `symbols`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `symbols` (
+  `symbol` varchar(10) NOT NULL,
+  `company` varchar(128) DEFAULT NULL,
+  PRIMARY KEY (`symbol`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
+/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+-- Dump completed on 2016-04-18 15:03:28
+
+==> analyzecalls.php <==
+<?php
+// analyzecalls.php
+// Description - downloads all call files automatically and inserts them into MySQL db (created via datainc.sql script).
+//               Inserts data into MySQL 100 records at a time.
+//
+// Author - R. Silva
+// 
+$db = mysql_connect('localhost', 'datauser', 'datainc');
+
+if (!$db) {
+  echo "Unable to establish connection to database server";
+  exit;
+}
+
+if (!mysql_select_db('datainc', $db)) {
+  echo "Unable to connect to database";
+  exit;
+}
+
+// Data sources to scrape from web
+$urls[] = 'https://data.nola.gov/api/views/28ec-c8d6/rows.csv?accessType=DOWNLOAD';
+$urls[] = 'https://data.nola.gov/api/views/rv3g-ypg7/rows.csv?accessType=DOWNLOAD';
+$urls[] = 'https://data.nola.gov/api/views/5fn8-vtui/rows.csv?accessType=DOWNLOAD';
+$urls[] = 'https://data.nola.gov/api/views/jsyu-nz5r/rows.csv?accessType=DOWNLOAD';
+$urls[] = 'https://data.nola.gov/api/views/w68y-xmk6/rows.csv?accessType=DOWNLOAD';
+
+// Date formats to convert to MySQL timestamps
+$datefmt = 'Y-m-d H:i:s';
+date_default_timezone_set('America/New_York');
+
+// Main - loop through each file 100 rows at a time
+foreach ($urls as $url) {
+  print "url = $url\n";
+  $csv = file_get_contents($url);
+  $rows = explode("\n",$csv);
+  unset($rows[0]);
+  $chunks = array_chunk($rows, 100);
+
+  foreach ($chunks as $chunk) {
+    print "here\n";
+    $calls = array();
+    foreach($chunk as $row) {
+
+      $s = str_getcsv($row);
+
+      if (isset($s[0])) $item = mysql_real_escape_string(strtoupper(trim($s[0])));
+      if (isset($s[1])) $type = mysql_real_escape_string(trim($s[1]));
+      if (isset($s[2])) $typetext = mysql_real_escape_string(trim($s[2]));
+      if (isset($s[3])) $priority = mysql_real_escape_string(trim($s[3]));
+      if (isset($s[4])) $mapx = mysql_real_escape_string(trim($s[4]));
+      if (isset($s[5])) $mapy = mysql_real_escape_string(trim($s[5]));
+      if (isset($s[6])) $created = mysql_real_escape_string(date($datefmt, strtotime(trim($s[6]))));
+      if (isset($s[7])) $dispatched = mysql_real_escape_string(date($datefmt, strtotime(trim($s[7]))));
+      if (isset($s[8])) $arrived = mysql_real_escape_string(date($datefmt, strtotime(trim($s[8]))));
+      if (isset($s[9])) $closed = mysql_real_escape_string(date($datefmt, strtotime(trim($s[9]))));
+      if (isset($s[10])) $disposition = mysql_real_escape_string(trim($s[10]));
+      if (isset($s[11])) $dispositiontext = mysql_real_escape_string(trim($s[11]));
+      if (isset($s[12])) $address = mysql_real_escape_string(trim($s[12]));
+      if (isset($s[13])) $zip = mysql_real_escape_string(trim($s[13]));
+      if (isset($s[14])) $pdistrict = mysql_real_escape_string(trim($s[14]));
+      if (isset($s[15])) {
+        $location = mysql_real_escape_string(trim($s[15]));
+        preg_match("/\((.*),\s+(.*)\)/", $location, $c);
+        $longitude = $c[1];
+        $latitude = $c[2];
+      }
+
+      if ($item != '') {
+        $calls[] = "'$item','$type','$typetext','$priority','$mapx','$mapy','$created','$dispatched','$arrived','$closed','$disposition','$dispositiontext','$address','$zip','$pdistrict','$longitude','$latitude'";
+      }
+
+    }
+    $callstr = implode('),(', $calls);
+    $q = "insert ignore into calls (item,type,typetext,priority,mapx,mapy,created,dispatched,arrived,closed,disposition,dispositiontext,address,zip,pdistrict,longitude,latitude) values ($callstr)";
+ 
+    $r = mysql_query($q);
+    $numinserts = mysql_affected_rows();
+
+    if ($r) print "success: ($numinserts) $url\n";
+    else print "fail: $url\n";
+    
+  }
+}
+?>
+
+==> getallsymbols.php <==
+<?php
+// getallsymbols.php
+// Description - downloads all symbol files automatically from Nasdaq and inserts them into MySQL db (created via datainc.sql script).
+//               Inserts data into MySQL, without duplicate symbols.
+//
+// Author - R. Silva
+// 
+
+// Connect to MySQL database
+$db = mysql_connect('localhost', 'datauser', 'datainc');
+
+if (!$db) {
+  echo "Unable to establish connection to database server";
+  exit;
+}
+
+if (!mysql_select_db('datainc', $db)) {
+  echo "Unable to connect to database";
+  exit;
+}
+
+// Data sources to automatically scrape from the web.
+$urls[] = 'http://www.nasdaq.com/screening/companies-by-industry.aspx?exchange=NASDAQ&render=download';
+$urls[] = 'http://www.nasdaq.com/screening/companies-by-industry.aspx?exchange=NYSE&render=download';
+$urls[] = 'http://www.nasdaq.com/screening/companies-by-industry.aspx?exchange=AMEX&render=download';
+
+// Data cleansing.  Translate all symbols into Yahoo Finance symbols in order to query RSS feeds.
+function translate($symbol) { // translate to Yahoo symbols
+  if (strpos($symbol, '.') !== FALSE) $symbol = str_replace(".", "-", $symbol);
+  if (strpos($symbol, 'WS') !== FALSE) $symbol = str_replace("S", "T", $symbol);
+  if (strpos($symbol, 'WT-') !== FALSE) $symbol = str_replace("WT-", "WT", $symbol);
+  if (strpos($symbol, '.CL') !== FALSE) $symbol = str_replace(".CL", "", $symbol);
+  if (strpos($symbol, '^') !== FALSE) $symbol = str_replace("^", "-P", $symbol);
+  return($symbol);
+}
+
+// Main - loop through data sources, extract csv row info, insert into database
+foreach ($urls as $url) {
+  $symbols = $s = array();
+  $csv = file_get_contents($url);
+  $rows = explode("\n",$csv);
+  unset($rows[0]);
+  foreach($rows as $row) {
+    $s = str_getcsv($row);
+    if (isset($s[0])) $symbol = mysql_real_escape_string(strtoupper(trim($s[0])));
+    if (isset($s[1])) $company = mysql_real_escape_string(trim($s[1]));
+    if ($symbol != '' and $company != '') {
+      $symbol = translate($symbol);
+      $symbols[] = "'$symbol', '$company'";
+    }
+  }
+
+  $symbolstr = implode('),(', $symbols);
+  $q = "insert ignore into symbols (symbol, company) values ($symbolstr)";
+  $r = mysql_query($q);
+  $numinserts = mysql_affected_rows();
+
+  if ($r) print "success: ($numinserts) $url\n";
+  else print "fail: $url\n";
+}
+?>
+
+==> gethl.php <==
+<?php
+// gethl.php   - Get Headlines
+// Description - downloads all RSS news from Yahoo Finance for all US symbols and inserts them into MySQL db (created via datainc.sql script).
+//
+// Author - R. Silva
+// 
+
+// Connect to MySQL database
+$db = mysql_connect('localhost', 'datauser', 'datainc');
+
+if (!$db) {
+  echo "Unable to establish connection to database server";
+  exit;
+}
+ 
+if (!mysql_select_db('datainc', $db)) {
+  echo "Unable to connect to database";
+  exit;
+}
+
+// MySQL date formats
+$datefmt = 'Y-m-d H:i:s';
+date_default_timezone_set('America/New_York');
+
+// Base URL to get per symbol RSS news headlines in XML format
+$urlbase = 'https://feeds.finance.yahoo.com/rss/2.0/headline?region=US&lang=en-US';
+
+// Gets all symbols in database
+function get_symbols() {
+  $symbols = array();
+  $q = "select distinct symbol from symbols where symbol";
+  $r = mysql_query($q);
+
+  if (!$r) return(0);
+
+  while ($i = mysql_fetch_array($r)) {
+    $symbols[] = strtoupper($i['symbol']);
+  }
+
+  return $symbols;
+}
+
+$symbols = get_symbols();
+
+// Main - For each symbol in the database, get RSS news headlines in XML from Yhaoo, extract necessary data, insert into database.
+if ($symbols) foreach ($symbols as $s) {
+  $url = "${urlbase}&s=$s";
+  $hls = file_get_contents($url);
+
+  $obj = new SimpleXMLElement($hls);
+  $items = $obj->channel->item;
+
+  foreach ($items as $i) {
+    $values = array($s);
+    $values[] = mysql_real_escape_string($i->title);
+    $values[] = mysql_real_escape_string($i->description);
+    $values[] = mysql_real_escape_string($i->link);
+    $values[] = mysql_real_escape_string($i->guid);
+    $values[] = mysql_real_escape_string($i->pubDate);
+    $values[] = date($datefmt, strtotime($i->pubDate));
+    $allvalues[] = "'" . implode("','", $values) . "'";
+  }
+
+  $allvaluestr = implode('),(', $allvalues);
+  $q = "insert ignore into headlines (symbol, title, link, description, guid, pubDate, time) values ($allvaluestr)";
+
+  $r = mysql_query($q);
+  $numinserts = mysql_affected_rows();
+
+  if ($r) print "$s successful ($numinserts)\n";
+  else print "$s failed\n";
+}
+?>
+
+==> gettopsymbols.php <==
+<?php
+// gettopsymbols.php - Gets most actively traded stock symbols from Wall Street Journal
+// Description - downloads all symbols automatically from Wall Street Journal and inserts them into MySQL db (created via datainc.sql script).
+//
+// Author - R. Silva
+// 
+
+// Connect to MySQL database
+$db = mysql_connect('localhost', 'datauser', 'datainc');
+
+if (!$db) {
+  echo "Unable to establish connection to database server";
+  exit;
+}
+
+if (!mysql_select_db('datainc', $db)) {
+  echo "Unable to connect to database";
+  exit;
+}
+
+// Date formats to convert to MySQL timestamps
+date_default_timezone_set('America/New_York');
+$datefmt = 'Y-m-d H:i:s';
+
+// Data sources to scrape from web - Wall St Journal
+$url = 'http://www.wsj.com/mdc/public/page/2_3021-activnyse-actives.html';
+
+// Main - Find all the symbol links in the web page, extract symbol and compnay data, insert it into database after cleansing
+$html = file_get_contents($url);
+if(preg_match_all("/^.*class=\"linkb\".*\$/m", $html, $matches)){
+   foreach ($matches[0] as $row) {
+     preg_match("/>(.*) \((.*)\)/", $row, $c);
+     //var_dump($c);
+     if ($c[1] != '' and $c[2]!= '') {
+       $symbol = mysql_real_escape_string($c[2]);
+       $company = mysql_real_escape_string($c[1]);
+       $symbols[] = "'$symbol', '$company'";
+     }
+   }
+}
+else{
+   echo "No matches found";
+}
+
+$symbolstr = implode('),(', $symbols);
+$q = "insert ignore into symbols (symbol, company) values ($symbolstr)";
+
+$r = mysql_query($q);
+$numinserts = mysql_affected_rows();
+
+if ($r) print "success: ($numinserts) $url\n";
+else print "fail: $url\n";
+?>
+
+==> probabilities.php <==
+<?php
+// probabilities.php - Uses news headlines data to determine probability of positive/negative sentiment per stock
+// Description - Uses simple sentiment scoring algorithm to determine positive or negative sentiment per headline, per stock, and 
+//               calculates corresponding probabilities.
+//
+// Author - R. Silva
+// 
+
+// Connect to MySQL database
+$db = mysql_connect('localhost', 'datauser', 'datainc');
+
+if (!$db) {
+  echo "Unable to establish connection to database server";
+  exit;
+}
+
+if (!mysql_select_db('datainc', $db)) {
+  echo "Unable to connect to database";
+  exit;
+}
+
+//  Super simple sentiment dictionaries of positive/negative words.  If text contains word, sentiment score is increased/decreased by 1
+$good = array('good', 'buy', 'long', 'upgrade', 'beat','improve', 'profitable', 'efficient');
+$bad = array('bad', 'sell', 'short', 'head winds', 'downgrade', 'amend', 'deficit', 'forbear', 'delist', 'default', 'felony', 'deterioration', 'termination');
+
+// Select all news headlines in database
+$q = "select * from headlines";
+$r = mysql_query($q);
+
+$num = $pos = $neg = $ts = $ds = array();
+
+// Main - Loop through all headlines and determine aggregate positive and negative sentiment scores and total headlines, per stock.
+if ($r) while ($i = mysql_fetch_array($r)) {
+  $s = $i['symbol'];
+  $t = $i['title'];
+  $d = $i['description'];
+  $time = $i['time'];
+
+  $tscore = sentiment_score($t);
+  $dscore = sentiment_score($d);
+ 
+  if (isset($num["$s"])) { $num["$s"] = $num["$s"] + 1; } else { $num["$s"] = 1; }
+
+  if ($tscore > 0) {
+    if (isset($pos["$s"])) { $pos["$s"] = $pos["$s"] + 1; } else { $pos["$s"] = 1; }
+  } else if ($tscore < 0) {
+    if (isset($neg["$s"])) { $neg["$s"] = $neg["$s"] + 1; } else { $neg["$s"] = 1; }
+  }
+}
+
+// For all symbols, print out symbol, positive headline probability, negative headline probability, in "CSV" format
+foreach (array_keys($num) as $s) {
+  $posprob = $negprob = 0;
+  if (isset($pos[$s])) $posprob = $pos[$s]/$num[$s];
+  if (isset($neg[$s])) $negprob = $neg[$s]/$num[$s];
+  print "$s,$num[$s],$posprob,$negprob\n";
+}
+
+// Determine sentiment score of text (+/- 1 per positive/negative word found)
+function sentiment_score($text) {
+  global $good, $bad;
+  $s = 0;
+
+  $t = strtolower($text);
+  foreach ($good as $g) {
+    if(preg_match("[$g]", $t)) { $s = $s + 1; } 
+  }
+  foreach ($bad as $b) {
+    if(preg_match("[$b]", $t)) { $s = $s - 1; } 
+  }
+
+  return($s);
+}
+?>
+
+==> sentiment.php <==
+<?php
+// sentiment.php - Generates sentiment scores for all symbols and all headlines.
+// Description - Output in CSV format to generate plot 1.
+//
+// Author - R. Silva
+// 
+
+// Connect to MySQL database
+$db = mysql_connect('localhost', 'datauser', 'datainc');
+
+if (!$db) {
+  echo "Unable to establish connection to database server";
+  exit;
+}
+
+if (!mysql_select_db('datainc', $db)) {
+  echo "Unable to connect to database";
+  exit;
+}
+
+// Super simple sentiment dictionaries of positive/negative words.  If text contains word, sentiment score is increased/decreased by 1
+$good = array('good', 'buy', 'long', 'upgrade', 'beat','improve', 'profitable', 'efficient');
+$bad = array('bad', 'sell', 'short', 'head winds', 'downgrade', 'amend', 'deficit', 'forbear', 'delist', 'default', 'felony', 'deterioration', 'termination');
+
+// Select all news headlines in database
+$q = "select * from headlines";
+$r = mysql_query($q);
+
+$ts = $ds = array();
+
+// Main - Loop through all headlines and determine aggregate sentiment scores per stock.
+if ($r) while ($i = mysql_fetch_array($r)) {
+  $s = $i['symbol'];
+  $t = $i['title'];
+  $d = $i['description'];
+  $time = $i['time'];
+
+  $tscore = sentiment_score($t);
+  $dscore = sentiment_score($d);
+ 
+  if (isset($ts["$s"])) { $ts["$s"] = $ts["$s"] + $tscore; } else { $ts["$s"] = $tscore; }
+  if (isset($ds["$s"])) { $ds["$s"] = $ds["$s"] + $dscore; } else { $ds["$s"] = $dscore; }
+}
+
+// For all symbols, print out symbol, headline total sentiment score, description total sentiment score, per stock, in "CSV" format
+foreach (array_keys($ts) as $s) {
+  print "$s,$ts[$s],$ds[$s]\n";
+}
+ 
+// Determine sentiment score of text (+/- 1 per positive/negative word found)
+function sentiment_score($text) {
+  global $good, $bad;
+  $s = 0;
+
+  $t = strtolower($text);
+  foreach ($good as $g) {
+    if(preg_match("[$g]", $t)) { $s = $s + 1; } 
+  }
+  foreach ($bad as $b) {
+    if(preg_match("[$b]", $t)) { $s = $s - 1; } 
+  }
+
+  return($s);
+}
+?>
